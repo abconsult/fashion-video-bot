@@ -5,8 +5,8 @@ from bot.keyboards import approval_keyboard
 from services.scraper import fetch_product_data
 from services.bg_remover import remove_background
 from services.prompt_generator import generate_model_prompt, generate_video_caption
-from services.tryon import generate_virtual_tryon
-from services.video_generator import generate_fashion_video
+from services.tryon import start_virtual_tryon, check_tryon_status
+from services.video_generator import start_fashion_video, check_video_status
 from services.video_assembler import assemble_final_video
 
 bot = Bot(token=config.TELEGRAM_TOKEN)
@@ -22,8 +22,10 @@ async def process_job(job: dict):
         handlers = {
             "SCRAPING_PHOTO":   _step_scrape,
             "REMOVING_BG":      _step_remove_bg,
-            "GENERATING_TRYON": _step_tryon,
-            "GENERATING_VIDEO": _step_generate_video,
+            "GENERATING_TRYON": _step_tryon_start,
+            "WAITING_TRYON":    _step_tryon_check,
+            "GENERATING_VIDEO": _step_video_start,
+            "WAITING_VIDEO":    _step_video_check,
             "ASSEMBLING_VIDEO": _step_assemble,
         }
         handler = handlers.get(step)
@@ -82,11 +84,34 @@ async def _step_remove_bg(chat_id: int, job: dict):
     )
 
 
-async def _step_tryon(chat_id: int, job: dict):
-    tryon_image_url = await generate_virtual_tryon(
+async def _step_tryon_start(chat_id: int, job: dict):
+    """Отправляем запрос на примерку и переводим в состояние ожидания."""
+    prediction_id = await start_virtual_tryon(
         clothing_image_b64=job["clean_image_b64"],
         prompt=job["prompt"],
     )
+    new_job = {**job, "step": "WAITING_TRYON", "tryon_task_id": prediction_id}
+    set_state(chat_id, "WAITING_TRYON", new_job)
+    push_job(new_job)
+    await bot.send_message(
+        chat_id,
+        "✅ Промпт принят. Генерация виртуальной примерки запущена (1-2 мин)..."
+    )
+
+async def _step_tryon_check(chat_id: int, job: dict):
+    """Проверяем статус примерки (вызывается cron-ом)."""
+    status_data = await check_tryon_status(job["tryon_task_id"])
+    
+    if status_data["status"] == "processing":
+        # Возвращаем задачу в очередь для следующей проверки
+        push_job(job)
+        return
+        
+    if status_data["status"] == "failed":
+        raise RuntimeError(f"Tryon failed: {status_data.get('error')}")
+        
+    # Успех
+    tryon_image_url = status_data["url"]
     new_job = {**job, "step": "GENERATING_VIDEO", "tryon_image_url": tryon_image_url}
     set_state(chat_id, "GENERATING_VIDEO", new_job)
     push_job(new_job)
@@ -98,12 +123,31 @@ async def _step_tryon(chat_id: int, job: dict):
     )
 
 
-async def _step_generate_video(chat_id: int, job: dict):
-    video_url = await generate_fashion_video(
+async def _step_video_start(chat_id: int, job: dict):
+    """Отправляем запрос на видео и переводим в состояние ожидания."""
+    task_id = await start_fashion_video(
         image_url=job["tryon_image_url"],
         prompt=job["prompt"],
         duration=5,
     )
+    new_job = {**job, "step": "WAITING_VIDEO", "video_task_id": task_id}
+    set_state(chat_id, "WAITING_VIDEO", new_job)
+    push_job(new_job)
+
+async def _step_video_check(chat_id: int, job: dict):
+    """Проверяем статус видео (вызывается cron-ом)."""
+    status_data = await check_video_status(job["video_task_id"])
+    
+    if status_data["status"] == "processing":
+        # Возвращаем задачу в очередь для следующей проверки
+        push_job(job)
+        return
+        
+    if status_data["status"] == "failed":
+        raise RuntimeError(f"Video generation failed: {status_data.get('error')}")
+        
+    # Успех
+    video_url = status_data["url"]
     new_job = {**job, "step": "ASSEMBLING_VIDEO", "raw_video_url": video_url}
     set_state(chat_id, "ASSEMBLING_VIDEO", new_job)
     push_job(new_job)

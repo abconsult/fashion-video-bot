@@ -25,7 +25,7 @@ async def process_job(job: dict):
             "GENERATING_TRYON": _step_tryon_start,
             "WAITING_TRYON":    _step_tryon_check,
             "GENERATING_VIDEO": _step_video_start,
-            "WAITING_VIDEO":    _step_video_check,
+            "WAITING_VIDEO_WEBHOOK": _step_video_waiting_webhook,
             "ASSEMBLING_VIDEO": _step_assemble,
         }
         handler = handlers.get(step)
@@ -132,42 +132,34 @@ async def _step_tryon_check(chat_id: int, job: dict):
     await bot.send_message(
         chat_id,
         "✅ Примерка готова!\n"
-        "🎦 Шаг 4/4: Генерирую видео...\n"
+        "🎦 Шаг 4/4: Генерирую видео (Kling 2.6)...\n"
         "⏱ ~2-5 минут",
     )
 
 
 async def _step_video_start(chat_id: int, job: dict):
-    """Отправляем запрос на видео и переводим в состояние ожидания."""
-    task_id = await start_fashion_video(
+    """Отправляем запрос на видео через ProTalk и переводим в ожидание коллбэка."""
+    await start_fashion_video(
         image_url=job["tryon_image_url"],
         prompt=job["prompt"],
+        chat_id=chat_id,
         duration=5,
     )
-    new_job = {**job, "step": "WAITING_VIDEO", "video_task_id": task_id}
-    set_state(chat_id, "WAITING_VIDEO", new_job)
-    push_job(new_job)
+    # Здесь мы не пушим задачу обратно в крон-очередь!
+    # Мы просто сохраняем состояние, а дальше нас разбудит вебхук от ProTalk
+    new_job = {**job, "step": "WAITING_VIDEO_WEBHOOK"}
+    set_state(chat_id, "WAITING_VIDEO_WEBHOOK", new_job)
 
-async def _step_video_check(chat_id: int, job: dict):
-    """Проверяем статус видео (вызывается cron-ом)."""
-    status_data = await check_video_status(job["video_task_id"])
-    
-    if status_data["status"] == "processing":
-        # Возвращаем задачу в очередь для следующей проверки
-        push_job(job)
-        return
-        
-    if status_data["status"] == "failed":
-        raise RuntimeError(f"Video generation failed: {status_data.get('error')}")
-        
-    # Успех
-    video_url = status_data["url"]
-    new_job = {**job, "step": "ASSEMBLING_VIDEO", "raw_video_url": video_url}
-    set_state(chat_id, "ASSEMBLING_VIDEO", new_job)
-    push_job(new_job)
+async def _step_video_waiting_webhook(chat_id: int, job: dict):
+    """
+    Пустышка. Если задача почему-то попала в крон на этом этапе,
+    просто игнорируем, так как ждем HTTP-коллбэк от ProTalk.
+    """
+    pass
 
 
 async def _step_assemble(chat_id: int, job: dict):
+    """Этот шаг вызывается после того, как коллбэк от Kling принес URL готового видео."""
     final_video_bytes = await assemble_final_video(
         video_url=job["raw_video_url"],
         product_name=job.get("product_name", ""),

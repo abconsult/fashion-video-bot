@@ -27,6 +27,9 @@ class Config(BaseSettings):
     
     # Cloudinary (Video Assembling)
     CLOUDINARY_URL: str = ""
+    
+    # Scraping (Amazon, Ozon bypass)
+    SCRAPINGBEE_API_KEY: str = ""
 
     # Vercel / App
     VERCEL_URL: str = ""

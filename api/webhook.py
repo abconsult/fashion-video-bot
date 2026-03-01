@@ -4,6 +4,9 @@ from fastapi import FastAPI, Request, HTTPException
 from telegram import Update, Bot
 from config import config
 
+# Импортируем наш настоящий диспетчер
+from bot.handlers import process_update
+
 app = FastAPI()
 
 # Инициализируем бота
@@ -20,23 +23,11 @@ async def telegram_webhook(request: Request):
         return {"ok": False, "error": "Token missing"}
 
     try:
-        # Получаем данные из запроса
         data = await request.json()
-        
-        # Десериализуем объект Update
         update = Update.de_json(data, bot)
         
-        # TODO: Заменить эхо-ответ на реальный диспетчер из bot.handlers
-        # Пример того, как это будет выглядеть:
-        # from bot.handlers.main_dispatcher import process_update
-        # await process_update(update)
-        
-        # Временная заглушка-эхо для проверки работоспособности вебхука
-        if update.message and update.message.text:
-            await bot.send_message(
-                chat_id=update.message.chat_id,
-                text=f"Вебхук успешно принят! Вы написали: {update.message.text}"
-            )
+        # Передаем Update в реальную логику обработчиков (handlers)
+        await process_update(update)
             
         return {"ok": True}
     except Exception as e:

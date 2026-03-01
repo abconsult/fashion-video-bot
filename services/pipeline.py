@@ -67,7 +67,8 @@ async def _step_scrape(chat_id: int, job: dict):
 
 async def _step_remove_bg(chat_id: int, job: dict):
     clean_image_b64 = await remove_background(job["image_url"])
-    prompt = generate_model_prompt(
+    # Теперь нужно использовать await для вызова асинхронной функции
+    prompt = await generate_model_prompt(
         clothing_description=job.get("product_name", "fashion clothing"),
         product_name=job.get("product_name", ""),
     )
@@ -159,7 +160,8 @@ async def _step_assemble(chat_id: int, job: dict):
         product_name=job.get("product_name", ""),
         product_price=job.get("product_price", ""),
     )
-    caption = generate_video_caption(
+    # Используем await, так как генерация текста теперь асинхронная
+    caption = await generate_video_caption(
         product_name=job.get("product_name", ""),
         product_price=job.get("product_price", ""),
     )

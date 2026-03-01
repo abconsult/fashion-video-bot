@@ -2,7 +2,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 
 from .url_handler import handle_url
-from .prompt_handler import handle_prompt_approval, handle_prompt_edit_input
+from .prompt_handler import handle_prompt_approval, handle_prompt_edit_input, handle_model_selection
 from .start import handle_start, handle_cancel
 from config import config
 
@@ -17,6 +17,9 @@ application.add_handler(CallbackQueryHandler(handle_cancel, pattern="^action_can
 # Хэндлеры для промпта (кнопки)
 application.add_handler(CallbackQueryHandler(handle_prompt_approval, pattern="^prompt_approve$"))
 application.add_handler(CallbackQueryHandler(handle_prompt_approval, pattern="^prompt_edit$"))
+
+# Хэндлер для выбора модели
+application.add_handler(CallbackQueryHandler(handle_model_selection, pattern="^model_.*$"))
 
 # Хэндлеры для текстовых сообщений (URL или новый промпт)
 # Сначала проверяем, не ждем ли мы текстовый ввод промпта, затем проверяем URL

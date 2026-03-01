@@ -5,7 +5,7 @@ from bot.keyboards import approval_keyboard
 from services.scraper import fetch_product_data
 from services.bg_remover import remove_background
 from services.prompt_generator import generate_model_prompt_and_category, generate_video_caption
-from services.tryon import start_virtual_tryon, check_tryon_status
+from services.tryon import start_virtual_tryon, check_tryon_status, get_model_url
 from services.video_generator import start_fashion_video, check_video_status
 from services.video_assembler import assemble_final_video
 
@@ -98,19 +98,19 @@ async def _step_remove_bg(chat_id: int, job: dict):
 
 async def _step_tryon_start(chat_id: int, job: dict):
     """Отправляем запрос на примерку и переводим в состояние ожидания."""
-    # Передаем категорию, которую мы получили на предыдущем шаге от AI
+    
+    # Получаем URL выбранной пользователем модели
+    model_url = get_model_url(job.get("model_id", "random"))
+    
     prediction_id = await start_virtual_tryon(
         clothing_image_b64=job["clean_image_b64"],
         prompt=job["prompt"],
-        category=job.get("category", "tops")
+        category=job.get("category", "tops"),
+        model_image_url=model_url
     )
     new_job = {**job, "step": "WAITING_TRYON", "tryon_task_id": prediction_id}
     set_state(chat_id, "WAITING_TRYON", new_job)
     push_job(new_job)
-    await bot.send_message(
-        chat_id,
-        "✅ Промпт принят. Выбрана модель, примерка запущена (1-2 мин)..."
-    )
 
 async def _step_tryon_check(chat_id: int, job: dict):
     """Проверяем статус примерки (вызывается cron-ом)."""

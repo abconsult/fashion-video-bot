@@ -1,33 +1,41 @@
 import os
+from pydantic_settings import BaseSettings
 
-
-class Config:
+class Config(BaseSettings):
     # Telegram
-    TELEGRAM_TOKEN: str = os.environ.get("TELEGRAM_TOKEN", "")
+    TELEGRAM_TOKEN: str
 
     # ProTalk API (OpenAI-compatible)
-    PROTALK_API_KEY: str = os.environ.get("PROTALK_API_KEY", "")
-    PROTALK_BOT_ID: int = int(os.environ.get("PROTALK_BOT_ID", "0"))
-    PROTALK_BOT_TOKEN: str = os.environ.get("PROTALK_BOT_TOKEN", "")
-    PROTALK_MODEL_NAME: str = os.environ.get("PROTALK_MODEL_NAME", "gpt-4o-mini")
+    PROTALK_API_KEY: str
+    PROTALK_BOT_ID: int = 0
+    PROTALK_BOT_TOKEN: str = ""
+    PROTALK_MODEL_NAME: str = "gpt-4o-mini"
 
     # Upstash Redis
-    UPSTASH_REDIS_REST_URL: str = os.environ.get("UPSTASH_REDIS_REST_URL", "")
-    UPSTASH_REDIS_REST_TOKEN: str = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "")
+    UPSTASH_REDIS_REST_URL: str
+    UPSTASH_REDIS_REST_TOKEN: str
 
     # remove.bg
-    REMOVE_BG_API_KEY: str = os.environ.get("REMOVE_BG_API_KEY", "")
+    REMOVE_BG_API_KEY: str
 
     # Fashn.ai virtual try-on
-    FASHN_API_KEY: str = os.environ.get("FASHN_API_KEY", "")
+    FASHN_API_KEY: str
 
     # Kling AI
-    KLING_API_KEY: str = os.environ.get("KLING_API_KEY", "")
-    KLING_API_SECRET: str = os.environ.get("KLING_API_SECRET", "")
+    KLING_API_KEY: str
+    KLING_API_SECRET: str
 
     # Vercel / App
-    VERCEL_URL: str = os.environ.get("VERCEL_URL", "")
-    CRON_SECRET: str = os.environ.get("CRON_SECRET", "")
+    VERCEL_URL: str = ""
+    CRON_SECRET: str
 
+    class Config:
+        # Pydantic будет искать эти переменные в .env файле для локальной разработки
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+        # Разрешаем игнорировать лишние переменные окружения
+        extra = "ignore"
 
+# При инициализации Pydantic автоматически считает переменные из os.environ.
+# Если обязательных переменных (без дефолтных значений) нет, он выбросит ошибку ValidationError
 config = Config()

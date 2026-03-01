@@ -1,7 +1,7 @@
-from openai import OpenAI
+from openai import AsyncOpenAI
 from config import config
 
-_client = OpenAI(
+_client = AsyncOpenAI(
     base_url="https://ai.pro-talk.ru/v1",
     api_key=config.PROTALK_API_KEY,
 )
@@ -22,11 +22,11 @@ SYSTEM_PROMPT_CAPTION = """Создай короткую рекламную по
 Требования: 2-3 строки + 3-5 хэштегов. Язык: русский. Стиль: модный, живой."""
 
 
-def generate_model_prompt(clothing_description: str, product_name: str = "") -> str:
+async def generate_model_prompt(clothing_description: str, product_name: str = "") -> str:
     """
     Генерирует промпт для AI-видео через ProTalk API (OpenAI-compatible).
     """
-    response = _client.chat.completions.create(
+    response = await _client.chat.completions.create(
         model=config.PROTALK_MODEL_NAME,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT_MODEL},
@@ -39,9 +39,9 @@ def generate_model_prompt(clothing_description: str, product_name: str = "") -> 
     return response.choices[0].message.content.strip()
 
 
-def generate_video_caption(product_name: str, product_price: str) -> str:
+async def generate_video_caption(product_name: str, product_price: str) -> str:
     """Генерирует подпись/капшн для финального видео."""
-    response = _client.chat.completions.create(
+    response = await _client.chat.completions.create(
         model=config.PROTALK_MODEL_NAME,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT_CAPTION},

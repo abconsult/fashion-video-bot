@@ -1,26 +1,41 @@
 import httpx
+import random
 from typing import Optional, Dict
 from config import config
 
-DEFAULT_MODEL_IMAGE = "https://fashn.ai/examples/model_standing_neutral.jpg"
+# Пул базовых фотографий моделей (разные типажи/ракурсы)
+# В продакшене эти фото должны быть загружены на ваш CDN или S3-совместимое хранилище
+MODELS_POOL = [
+    "https://fashn.ai/examples/model_standing_neutral.jpg",  # Дефолтная стоя
+    "https://fashn.ai/examples/model_2_neutral.jpg",         # Пример модели 2
+    "https://fashn.ai/examples/model_3_pose.jpg",            # Пример модели 3 (в позе)
+]
+
+def get_random_model() -> str:
+    """Выбирает случайную модель из пула."""
+    return random.choice(MODELS_POOL)
 
 async def start_virtual_tryon(
     clothing_image_b64: str,
     prompt: str,
     category: str = "tops",
+    model_image_url: Optional[str] = None
 ) -> str:
     """
     Отправляет задачу на генерацию примерки в Fashn.ai.
-    Возвращает prediction_id задачи, не дожидаясь выполнения.
     """
     headers = {
         "Authorization": f"Bearer {config.FASHN_API_KEY}",
         "Content-Type": "application/json",
     }
+    
+    # Если URL модели не передан, берем случайную из пула
+    selected_model = model_image_url if model_image_url else get_random_model()
+    
     payload = {
-        "model_image": DEFAULT_MODEL_IMAGE,
+        "model_image": selected_model,
         "garment_image": f"data:image/png;base64,{clothing_image_b64}",
-        "category": category,
+        "category": category, # Используем динамическую категорию (tops, bottoms, one-pieces)
         "mode": "quality",
         "num_samples": 1,
     }
@@ -43,7 +58,6 @@ async def start_virtual_tryon(
 async def check_tryon_status(prediction_id: str) -> Dict[str, Optional[str]]:
     """
     Проверяет статус задачи в Fashn.ai.
-    Возвращает {"status": "processing"|"completed"|"failed", "url": "...", "error": "..."}
     """
     headers = {
         "Authorization": f"Bearer {config.FASHN_API_KEY}",

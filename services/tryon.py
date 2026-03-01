@@ -3,17 +3,32 @@ import random
 from typing import Optional, Dict
 from config import config
 
-# Пул базовых фотографий моделей (разные типажи/ракурсы)
-# В продакшене эти фото должны быть загружены на ваш CDN или S3-совместимое хранилище
-MODELS_POOL = [
-    "https://fashn.ai/examples/model_standing_neutral.jpg",  # Дефолтная стоя
-    "https://fashn.ai/examples/model_2_neutral.jpg",         # Пример модели 2
-    "https://fashn.ai/examples/model_3_pose.jpg",            # Пример модели 3 (в позе)
-]
+# Пул базовых фотографий моделей с описаниями
+MODELS_POOL = {
+    "1": {
+        "name": "Европейский типаж, блондинка",
+        "url": "https://fashn.ai/examples/model_standing_neutral.jpg"
+    },
+    "2": {
+        "name": "Азиатский типаж, брюнетка",
+        "url": "https://fashn.ai/examples/model_2_neutral.jpg"
+    },
+    "3": {
+        "name": "Афроамериканский типаж",
+        "url": "https://fashn.ai/examples/model_3_pose.jpg"
+    }
+}
 
-def get_random_model() -> str:
+def get_random_model_url() -> str:
     """Выбирает случайную модель из пула."""
-    return random.choice(MODELS_POOL)
+    model_key = random.choice(list(MODELS_POOL.keys()))
+    return MODELS_POOL[model_key]["url"]
+
+def get_model_url(model_id: str) -> str:
+    """Возвращает URL модели по ID, или дефолтную, если ID нет."""
+    if model_id in MODELS_POOL:
+        return MODELS_POOL[model_id]["url"]
+    return get_random_model_url()
 
 async def start_virtual_tryon(
     clothing_image_b64: str,
@@ -30,7 +45,7 @@ async def start_virtual_tryon(
     }
     
     # Если URL модели не передан, берем случайную из пула
-    selected_model = model_image_url if model_image_url else get_random_model()
+    selected_model = model_image_url if model_image_url else get_random_model_url()
     
     payload = {
         "model_image": selected_model,

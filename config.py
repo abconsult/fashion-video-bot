@@ -24,6 +24,9 @@ class Config(BaseSettings):
     # Kling AI
     KLING_API_KEY: str
     KLING_API_SECRET: str
+    
+    # Cloudinary (Video Assembling)
+    CLOUDINARY_URL: str = ""
 
     # Vercel / App
     VERCEL_URL: str = ""

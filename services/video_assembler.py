@@ -1,8 +1,13 @@
 import httpx
-import os
-import tempfile
-import subprocess
+import cloudinary
+import cloudinary.uploader
+import urllib.parse
 from typing import Optional
+from config import config
+
+# Инициализируем Cloudinary
+if config.CLOUDINARY_URL:
+    cloudinary.config(url=config.CLOUDINARY_URL)
 
 
 async def assemble_final_video(
@@ -12,59 +17,86 @@ async def assemble_final_video(
     caption: Optional[str] = None,
 ) -> bytes:
     """
-    Скачивает видео и добавляет текстовый оверлей через FFmpeg.
-    Если FFmpeg недоступен, возвращает оригинальное видео.
+    Накладывает текст (название и цена) на видео, используя Cloudinary Transformations.
+    Возвращает байты готового видео для отправки в Telegram.
+    
+    Если Cloudinary не настроен, возвращает исходное видео.
     """
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.get(video_url)
-        resp.raise_for_status()
-        video_bytes = resp.content
+    if not config.CLOUDINARY_URL:
+        print("[Video Assembler] CLOUDINARY_URL is missing, falling back to original video.")
+        return await _download_file(video_url)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        input_path = os.path.join(tmpdir, "input.mp4")
-        output_path = os.path.join(tmpdir, "output.mp4")
-
-        with open(input_path, "wb") as f:
-            f.write(video_bytes)
-
-        title_text = (product_name or "Новая коллекция")[:40]
-        price_text = f"Цена: {product_price}" if product_price else ""
-
-        vf_filter = (
-            f"drawtext=text='{_esc(title_text)}'"
-            f":fontsize=48:fontcolor=white"
-            f":x=(w-text_w)/2:y=h-200"
-            f":shadowcolor=black:shadowx=2:shadowy=2"
+    try:
+        # 1. Загружаем сырое видео в Cloudinary (или берем по URL напрямую, если поддерживается)
+        # Так как видео уже где-то хостится (Kling), используем upload с параметром resource_type="video"
+        upload_result = cloudinary.uploader.upload(
+            video_url,
+            resource_type="video",
+            folder="fashion_bot_videos"
         )
-        if price_text:
-            vf_filter += (
-                f",drawtext=text='{_esc(price_text)}'"
-                f":fontsize=36:fontcolor=yellow"
-                f":x=(w-text_w)/2:y=h-140"
-                f":shadowcolor=black:shadowx=2:shadowy=2"
-            )
+        public_id = upload_result["public_id"]
 
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", input_path,
-            "-vf", vf_filter,
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "23",
-            "-c:a", "copy",
-            output_path,
+        # 2. Формируем трансформации для текста
+        # Документация Cloudinary: https://cloudinary.com/documentation/video_manipulation_and_delivery#adding_text_captions
+        title_text = (product_name or "Новая коллекция")[:40]
+        encoded_title = urllib.parse.quote(title_text)
+        
+        transformations = [
+            {"width": 1080, "height": 1920, "crop": "fill"}
         ]
+        
+        # Слой для названия товара
+        transformations.append({
+            "overlay": {
+                "font_family": "Arial",
+                "font_size": 48,
+                "font_weight": "bold",
+                "text": encoded_title
+            },
+            "color": "white",
+            "gravity": "south",
+            "y": 200,
+            "effect": "shadow"
+        })
 
-        result = subprocess.run(cmd, capture_output=True, timeout=120)
+        # Слой для цены
+        if product_price:
+            encoded_price = urllib.parse.quote(f"Цена: {product_price}")
+            transformations.append({
+                "overlay": {
+                    "font_family": "Arial",
+                    "font_size": 36,
+                    "font_weight": "bold",
+                    "text": encoded_price
+                },
+                "color": "yellow",
+                "gravity": "south",
+                "y": 140,
+                "effect": "shadow"
+            })
 
-        if result.returncode != 0:
-            print(f"FFmpeg stderr: {result.stderr.decode()}")
-            return video_bytes  # фоллбэк: оригинальное видео
+        # 3. Генерируем URL с наложенным текстом
+        final_video_url, _ = cloudinary.utils.cloudinary_url(
+            public_id,
+            resource_type="video",
+            transformation=transformations,
+            format="mp4"
+        )
+        
+        print(f"[Video Assembler] Generated Cloudinary URL: {final_video_url}")
 
-        with open(output_path, "rb") as f:
-            return f.read()
+        # 4. Скачиваем готовое видео для отправки в Telegram
+        return await _download_file(final_video_url)
+
+    except Exception as e:
+        print(f"[Video Assembler] Cloudinary processing failed: {e}")
+        # В случае любой ошибки отдаем оригинальное видео, чтобы пайплайн не падал
+        return await _download_file(video_url)
 
 
-def _esc(text: str) -> str:
-    """FFmpeg drawtext escaping."""
-    return text.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
+async def _download_file(url: str) -> bytes:
+    """Вспомогательная функция для скачивания файла в память."""
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.content

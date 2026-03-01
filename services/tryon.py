@@ -1,21 +1,17 @@
 import httpx
-import asyncio
+from typing import Optional, Dict
 from config import config
 
-# Дефолтное изображение модели (замените на свой URL или базу моделей)
 DEFAULT_MODEL_IMAGE = "https://fashn.ai/examples/model_standing_neutral.jpg"
 
-
-async def generate_virtual_tryon(
+async def start_virtual_tryon(
     clothing_image_b64: str,
     prompt: str,
     category: str = "tops",
 ) -> str:
     """
-    Генерирует виртуальную примерку одежды на AI-модели через Fashn.ai API.
-    Returns URL готового изображения примерки.
-
-    Docs: https://fashn.ai/docs
+    Отправляет задачу на генерацию примерки в Fashn.ai.
+    Возвращает prediction_id задачи, не дожидаясь выполнения.
     """
     headers = {
         "Authorization": f"Bearer {config.FASHN_API_KEY}",
@@ -29,7 +25,7 @@ async def generate_virtual_tryon(
         "num_samples": 1,
     }
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
             "https://api.fashn.ai/v1/run",
             json=payload,
@@ -40,23 +36,36 @@ async def generate_virtual_tryon(
 
         if not prediction_id:
             raise RuntimeError("Fashn.ai: не получен ID задачи")
+            
+        return prediction_id
 
-        for _ in range(30):
-            await asyncio.sleep(5)
-            status_resp = await client.get(
-                f"https://api.fashn.ai/v1/status/{prediction_id}",
-                headers=headers,
-            )
-            status_data = status_resp.json()
-            status = status_data.get("status")
 
-            if status == "completed":
-                output = status_data.get("output", [])
-                if output:
-                    return output[0]
-                raise RuntimeError("Fashn.ai: пустой output")
+async def check_tryon_status(prediction_id: str) -> Dict[str, Optional[str]]:
+    """
+    Проверяет статус задачи в Fashn.ai.
+    Возвращает {"status": "processing"|"completed"|"failed", "url": "...", "error": "..."}
+    """
+    headers = {
+        "Authorization": f"Bearer {config.FASHN_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(
+            f"https://api.fashn.ai/v1/status/{prediction_id}",
+            headers=headers,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        status = data.get("status")
 
-            if status in ("failed", "cancelled"):
-                raise RuntimeError(f"Fashn.ai failed: {status_data.get('error')}")
+        if status == "completed":
+            output = data.get("output", [])
+            if output:
+                return {"status": "completed", "url": output[0]}
+            return {"status": "failed", "error": "Empty output array"}
 
-    raise TimeoutError("Fashn.ai: превышено время ожидания (150 сек)")
+        if status in ("failed", "cancelled"):
+            return {"status": "failed", "error": data.get("error", "Unknown error")}
+
+        return {"status": "processing"}

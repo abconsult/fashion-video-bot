@@ -1,89 +1,64 @@
 import httpx
-import jwt
-import time
+import json
+import urllib.parse
 from typing import Dict, Optional
 from config import config
-
-
-def _get_kling_token() -> str:
-    """Генерирует JWT-токен для Kling AI API."""
-    payload = {
-        "iss": config.KLING_API_KEY,
-        "exp": int(time.time()) + 1800,
-        "nbf": int(time.time()) - 5,
-    }
-    return jwt.encode(payload, config.KLING_API_SECRET, algorithm="HS256")
-
 
 async def start_fashion_video(
     image_url: str,
     prompt: str,
+    chat_id: int,
     duration: int = 5,
 ) -> str:
     """
-    Отправляет задачу на генерацию видео в Kling AI API.
-    Возвращает task_id задачи, не дожидаясь выполнения.
+    Отправляет задачу на генерацию видео через функцию ProTalk №585 (Kling 2.6).
+    Передает callBackUrl для получения результата на Vercel.
+    Возвращает статус "ok" если запрос принят.
     """
-    token = _get_kling_token()
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model_name": "kling-v1",
-        "image": image_url,
+    # Собираем URL для вебхука с токеном безопасности и ID чата
+    base_url = config.VERCEL_URL.rstrip('/')
+    if not base_url.startswith("http"):
+        base_url = f"https://{base_url}"
+        
+    callback_url = f"{base_url}/api/kling_callback?token={config.CRON_SECRET}&chat_id={chat_id}"
+
+    # Параметры для функции 585
+    params = {
         "prompt": prompt,
-        "negative_prompt": "blurry, low quality, distorted, bad anatomy",
-        "cfg_scale": 0.5,
-        "mode": "std",
+        "image_urls": image_url,
         "duration": str(duration),
-        "aspect_ratio": "9:16",
+        "sound": False,
+        "taskId_only": True,
+        "callBackUrl": callback_url
+    }
+
+    # Формируем сообщение: номер функции + JSON с новой строки
+    message_text = f"585\n{json.dumps(params, ensure_ascii=False)}"
+
+    payload = {
+        "bot_id": config.PROTALK_BOT_ID,
+        "bot_token": config.PROTALK_BOT_TOKEN,
+        "bot_chat_id": f"kling_{chat_id}",
+        "message": message_text
     }
 
     async with httpx.AsyncClient(timeout=30) as client:
+        # Используем асинхронную отправку (не ждем генерации)
         resp = await client.post(
-            "https://api.klingai.com/v1/videos/image2video",
-            json=payload,
-            headers=headers,
+            "https://eu1.api.pro-talk.ru/api/v1.0/send_message_async",
+            json=payload
         )
         resp.raise_for_status()
-        data = resp.json()
-
-        if data.get("code") != 0:
-            raise RuntimeError(f"Kling AI error: {data.get('message')}")
-
-        return data["data"]["task_id"]
+        
+        # На данном этапе задача отправлена в ProTalk. Мы не можем моментально получить taskId
+        # Поэтому просто возвращаем успех. Пайплайн остановится и будет ждать webhook (callback).
+        return "async_task_started"
 
 
 async def check_video_status(task_id: str) -> Dict[str, Optional[str]]:
     """
-    Проверяет статус задачи в Kling AI.
-    Возвращает {"status": "processing"|"completed"|"failed", "url": "...", "error": "..."}
+    Оставлено для обратной совместимости или ручного пуллинга,
+    но в новой архитектуре результат придет через Webhook (callback).
     """
-    token = _get_kling_token()
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(
-            f"https://api.klingai.com/v1/videos/image2video/{task_id}",
-            headers=headers,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        
-        if data.get("code") != 0:
-             return {"status": "failed", "error": data.get("message")}
-             
-        task_data = data.get("data", {})
-        task_status = task_data.get("task_status")
-
-        if task_status == "succeed":
-            videos = task_data.get("task_result", {}).get("videos", [])
-            if videos:
-                return {"status": "completed", "url": videos[0]["url"]}
-            return {"status": "failed", "error": "Empty videos array"}
-
-        if task_status == "failed":
-            return {"status": "failed", "error": str(data)}
-
-        return {"status": "processing"}
+    # Если мы перешли на callback, этот метод нам больше не нужен для активного поллинга Kling.
+    return {"status": "processing"}

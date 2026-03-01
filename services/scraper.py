@@ -1,6 +1,8 @@
 import re
 import httpx
+from bs4 import BeautifulSoup
 from typing import Optional
+from config import config
 
 SUPPORTED_DOMAINS = [
     "wildberries.ru",
@@ -8,6 +10,7 @@ SUPPORTED_DOMAINS = [
     "amazon.co.uk",
     "amazon.de",
     "ozon.ru",
+    "ozon.by",
 ]
 
 
@@ -24,7 +27,7 @@ async def fetch_product_data(url: str) -> dict:
         return await _scrape_wildberries(url)
     elif "amazon" in url:
         return await _scrape_amazon(url)
-    elif "ozon.ru" in url:
+    elif "ozon" in url:
         return await _scrape_ozon(url)
     raise ValueError(f"Unsupported marketplace: {url}")
 
@@ -86,11 +89,104 @@ def _wb_basket(vol: int) -> int:
 
 
 async def _scrape_amazon(url: str) -> dict:
-    raise NotImplementedError(
-        "Amazon scraping requires ScrapingBee API. "
-        "Set SCRAPINGBEE_API_KEY env variable."
-    )
+    """
+    Парсит Amazon через ScrapingBee (обход капчи).
+    Ищет title (id="productTitle"), price (class="a-price-whole"), image (id="landingImage").
+    """
+    if not config.SCRAPINGBEE_API_KEY:
+        raise ValueError("Для работы Amazon требуется SCRAPINGBEE_API_KEY")
+
+    api_url = "https://app.scrapingbee.com/api/v1/"
+    params = {
+        "api_key": config.SCRAPINGBEE_API_KEY,
+        "url": url,
+        "render_js": "false",
+        "extract_rules": '{"title": "#productTitle", "price": ".a-price-whole", "image": {"selector": "#landingImage", "output": "@src"}}'
+    }
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.get(api_url, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+
+    if not data.get("image"):
+        # Попробуем альтернативный селектор для фото
+        params["extract_rules"] = '{"title": "#productTitle", "price": ".a-price-whole", "image": {"selector": "#imgTagWrapperId img", "output": "@src"}}'
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.get(api_url, params=params)
+            data = resp.json()
+
+    if not data.get("image"):
+        raise ValueError("Не удалось извлечь фотографию товара с Amazon")
+
+    title = data.get("title", "Amazon Product").strip()
+    price = data.get("price", "").strip()
+
+    return {
+        "image_url": data["image"],
+        "product_name": title,
+        "product_price": f"${price}" if price else "",
+        "article": url,
+    }
 
 
 async def _scrape_ozon(url: str) -> dict:
-    raise NotImplementedError("Ozon scraping is not yet implemented.")
+    """
+    Парсит Ozon через ScrapingBee, так как Ozon блокирует обычные запросы (Cloudflare/Captcha).
+    Использует BeautifulSoup для более сложного разбора DOM.
+    """
+    if not config.SCRAPINGBEE_API_KEY:
+        raise ValueError("Для работы Ozon требуется SCRAPINGBEE_API_KEY")
+
+    api_url = "https://app.scrapingbee.com/api/v1/"
+    params = {
+        "api_key": config.SCRAPINGBEE_API_KEY,
+        "url": url,
+        "render_js": "true",  # Для Ozon часто нужен JS
+        "wait_browser": "networkidle2"
+    }
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.get(api_url, params=params)
+        resp.raise_for_status()
+        html = resp.text
+
+    soup = BeautifulSoup(html, "html.parser")
+    
+    # 1. Ищем название (обычно в h1)
+    title_tag = soup.find("h1")
+    title = title_tag.text.strip() if title_tag else "Ozon Product"
+
+    # 2. Ищем картинку (ищем img теги внутри контейнеров с фото)
+    image_url = ""
+    # Ищем картинки с высоким разрешением, у которых есть data-src или src и alt совпадает с title (или близко)
+    img_tags = soup.find_all("img")
+    for img in img_tags:
+        src = img.get("src", "")
+        # Ozon хранит фото товаров в CDN cdn1.ozonapi.com/s3/
+        if "cdn" in src and "ozonapi" in src and "wc1000" in src:
+            image_url = src
+            break
+            
+    if not image_url:
+        for img in img_tags:
+            src = img.get("src", "")
+            if "cdn" in src and "ozonapi" in src:
+                image_url = src
+                break
+
+    if not image_url:
+        raise ValueError("Не удалось извлечь фотографию товара с Ozon")
+
+    # 3. Ищем цену
+    price = ""
+    price_tag = soup.find("span", text=re.compile(r'₽|руб'))
+    if price_tag:
+        price = price_tag.text.strip()
+
+    return {
+        "image_url": image_url,
+        "product_name": title,
+        "product_price": price,
+        "article": url,
+    }

@@ -4,7 +4,7 @@ from storage.redis_client import set_state, get_state, push_job
 from bot.keyboards import approval_keyboard
 from services.scraper import fetch_product_data
 from services.bg_remover import remove_background
-from services.prompt_generator import generate_model_prompt, generate_video_caption
+from services.prompt_generator import generate_model_prompt_and_category, generate_video_caption
 from services.tryon import start_virtual_tryon, check_tryon_status
 from services.video_generator import start_fashion_video, check_video_status
 from services.video_assembler import assemble_final_video
@@ -67,16 +67,27 @@ async def _step_scrape(chat_id: int, job: dict):
 
 async def _step_remove_bg(chat_id: int, job: dict):
     clean_image_b64 = await remove_background(job["image_url"])
-    # Теперь нужно использовать await для вызова асинхронной функции
-    prompt = await generate_model_prompt(
+    
+    # AI теперь возвращает не просто промпт, но и классифицирует категорию одежды
+    ai_result = await generate_model_prompt_and_category(
         clothing_description=job.get("product_name", "fashion clothing"),
         product_name=job.get("product_name", ""),
     )
-    state_data = {**job, "clean_image_b64": clean_image_b64, "prompt": prompt}
+    prompt = ai_result["prompt"]
+    category = ai_result["category"]
+    
+    state_data = {
+        **job, 
+        "clean_image_b64": clean_image_b64, 
+        "prompt": prompt,
+        "category": category  # Сохраняем категорию для Fashn API
+    }
+    
     set_state(chat_id, "WAITING_APPROVAL", state_data)
     await bot.send_message(
         chat_id,
-        f"✅ Фон удалён!\n\n"
+        f"✅ Фон удалён!\n"
+        f"👚 Категория: *{category}*\n\n"
         f"🤖 *AI сгенерировал промпт для модели:*\n\n"
         f"_{prompt}_\n\n"
         "Подтвердить или отредактировать?",
@@ -87,16 +98,18 @@ async def _step_remove_bg(chat_id: int, job: dict):
 
 async def _step_tryon_start(chat_id: int, job: dict):
     """Отправляем запрос на примерку и переводим в состояние ожидания."""
+    # Передаем категорию, которую мы получили на предыдущем шаге от AI
     prediction_id = await start_virtual_tryon(
         clothing_image_b64=job["clean_image_b64"],
         prompt=job["prompt"],
+        category=job.get("category", "tops")
     )
     new_job = {**job, "step": "WAITING_TRYON", "tryon_task_id": prediction_id}
     set_state(chat_id, "WAITING_TRYON", new_job)
     push_job(new_job)
     await bot.send_message(
         chat_id,
-        "✅ Промпт принят. Генерация виртуальной примерки запущена (1-2 мин)..."
+        "✅ Промпт принят. Выбрана модель, примерка запущена (1-2 мин)..."
     )
 
 async def _step_tryon_check(chat_id: int, job: dict):
@@ -160,7 +173,6 @@ async def _step_assemble(chat_id: int, job: dict):
         product_name=job.get("product_name", ""),
         product_price=job.get("product_price", ""),
     )
-    # Используем await, так как генерация текста теперь асинхронная
     caption = await generate_video_caption(
         product_name=job.get("product_name", ""),
         product_price=job.get("product_price", ""),
